@@ -2,10 +2,10 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-const char *ssid = "LITTORAL";
-const char *password = "12345678";
+const char *ssid = "Jordana";
+const char *password = "11335577";
 
-const char *url = "http://192.168.5.182:8000/";
+const char *url = "http://192.168.254.83:8000/";
 
 // See available models on README.md or ESP32CameraPins.h
 ESP32QRCodeReader reader(CAMERA_MODEL_AI_THINKER);
@@ -42,6 +42,38 @@ String httpGETRequest(const char *serverName)
 
   return payload;
 }
+
+String urlEncode(String str) {
+  String encodedString = "";
+  char c;
+  char code0;
+  char code1;
+  char code2;
+  for (int i = 0; i < str.length(); i++) {
+    c = str.charAt(i);
+    if (c == ' ') {
+      encodedString += '+';
+    } else if (isalnum(c)) {
+      encodedString += c;
+    } else {
+      code1 = (c & 0xf) + '0';
+      if ((c & 0xf) > 9) {
+        code1 = (c & 0xf) - 10 + 'A';
+      }
+      c = (c >> 4) & 0xf;
+      code0 = c + '0';
+      if (c > 9) {
+        code0 = c - 10 + 'A';
+      }
+      code2 = '\0';
+      encodedString += '%';
+      encodedString += code0;
+      encodedString += code1;
+    }
+  }
+  return encodedString;
+}
+
 
 void onQrCodeTask(void *pvParameters)
 {
@@ -85,11 +117,11 @@ void onHttpRequestTask(void *pvParameters)
       // Check WiFi connection status
       if (WiFi.status() == WL_CONNECTED)
       {
-        String requestUrl = String(url) + "?qr="  + "benjamin";
+        String requestUrl = String(url) + urlEncode(qrPayload);
         Serial.println("Send:" + requestUrl);
         String response = httpGETRequest(requestUrl.c_str());
         Serial.println("HTTP Response: " + response);
-
+        delay(500);
         qrPayload = "";         // Limpa o payload após o envio
         qrPayloadReady = false; // Reseta a flag após o envio
       }
