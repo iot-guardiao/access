@@ -5,9 +5,19 @@
 const char *ssid = "Jordana";
 const char *password = "11335577";
 
-const char *url = "http://192.168.254.83:8000/";
+const char *url = "http://192.168.37.141:8000/agendamentos/verificar/Leg01/";
 
-// See available models on README.md or ESP32CameraPins.h
+// Pinos dos LEDs
+const int ledRedPin = 12;
+const int ledBluePin = 13;
+
+// Fila para comunicação entre tasks
+QueueHandle_t ledQueue;
+
+// Estrutura para mensagens na fila
+enum LedState { LED_RED, LED_BLUE };
+
+// Configuração da câmera
 ESP32QRCodeReader reader(CAMERA_MODEL_AI_THINKER);
 
 String qrPayload = ""; // Armazena o conteúdo do QR code
@@ -20,7 +30,7 @@ String httpGETRequest(const char *serverName)
 
   http.begin(client, serverName);
 
-  // Send HTTP GET request
+  // Envia a requisição HTTP GET
   int httpResponseCode = http.GET();
 
   String payload = "--";
@@ -37,35 +47,38 @@ String httpGETRequest(const char *serverName)
     Serial.println(httpResponseCode);
   }
 
-  // Free resources
+  // Libera recursos
   http.end();
 
   return payload;
 }
 
-String urlEncode(String str) {
+String urlEncode(String str)
+{
   String encodedString = "";
   char c;
   char code0;
   char code1;
-  char code2;
-  for (int i = 0; i < str.length(); i++) {
+  for (int i = 0; i < str.length(); i++)
+  {
     c = str.charAt(i);
-    if (c == ' ') {
-      encodedString += '+';
-    } else if (isalnum(c)) {
+    if (isalnum(c))
+    {
       encodedString += c;
-    } else {
+    }
+    else
+    {
       code1 = (c & 0xf) + '0';
-      if ((c & 0xf) > 9) {
+      if ((c & 0xf) > 9)
+      {
         code1 = (c & 0xf) - 10 + 'A';
       }
       c = (c >> 4) & 0xf;
       code0 = c + '0';
-      if (c > 9) {
+      if (c > 9)
+      {
         code0 = c - 10 + 'A';
       }
-      code2 = '\0';
       encodedString += '%';
       encodedString += code0;
       encodedString += code1;
@@ -73,7 +86,6 @@ String urlEncode(String str) {
   }
   return encodedString;
 }
-
 
 void onQrCodeTask(void *pvParameters)
 {
@@ -93,10 +105,9 @@ void onQrCodeTask(void *pvParameters)
       }
       else
       {
-        Serial.print("Invalid QR Code: ");
-        Serial.println((const char *)qrCodeData.payload);
-        qrPayload = "";         // Limpa o payload inválido
-        qrPayloadReady = false; // Flag não pronta
+        Serial.println("Invalid QR Code");
+        qrPayload = "";
+        qrPayloadReady = false;
       }
     }
     vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -105,35 +116,53 @@ void onQrCodeTask(void *pvParameters)
 
 void onHttpRequestTask(void *pvParameters)
 {
-  unsigned long previousMillis = 0;
-  const long interval = 5000;
-
   while (true)
   {
-    unsigned long currentMillis = millis();
-
-    if (currentMillis - previousMillis >= interval && qrPayloadReady)
+    if (qrPayloadReady && WiFi.status() == WL_CONNECTED)
     {
-      // Check WiFi connection status
-      if (WiFi.status() == WL_CONNECTED)
-      {
-        String requestUrl = String(url) + urlEncode(qrPayload);
-        Serial.println("Send:" + requestUrl);
-        String response = httpGETRequest(requestUrl.c_str());
-        Serial.println("HTTP Response: " + response);
-        delay(500);
-        qrPayload = "";         // Limpa o payload após o envio
-        qrPayloadReady = false; // Reseta a flag após o envio
-      }
-      else
-      {
-        Serial.println("WiFi Disconnected");
-      }
+      String requestUrl = String(url) + urlEncode(qrPayload) + "/";
+      Serial.println("Send: " + requestUrl);
+      String response = httpGETRequest(requestUrl.c_str());
+      Serial.println("HTTP Response: " + response);
 
-      previousMillis = currentMillis;
+      // Determina qual LED acender com base na resposta
+      LedState ledState = (response == "true") ? LED_BLUE : LED_RED;
+      xQueueSend(ledQueue, &ledState, portMAX_DELAY);
+
+      qrPayload = "";         // Limpa o payload após o envio
+      qrPayloadReady = false; // Reseta a flag após o envio
     }
 
     vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
+
+void ledControlTask(void *pvParameters)
+{
+  LedState ledState;
+
+  while (true)
+  {
+    if (xQueueReceive(ledQueue, &ledState, portMAX_DELAY))
+    {
+      if (ledState == LED_BLUE)
+      {
+        digitalWrite(ledRedPin, LOW);
+        digitalWrite(ledBluePin, HIGH);
+      }
+      else if (ledState == LED_RED)
+      {
+        digitalWrite(ledBluePin, LOW);
+        digitalWrite(ledRedPin, HIGH);
+      }
+
+      
+      vTaskDelay(5000 / portTICK_PERIOD_MS);
+
+      
+      digitalWrite(ledRedPin, LOW);
+      digitalWrite(ledBluePin, LOW);
+    }
   }
 }
 
@@ -155,9 +184,17 @@ void setup()
   reader.setup();
   reader.beginOnCore(1);
 
-  // Create tasks
+  // Configuração dos pinos dos LEDs
+  pinMode(ledRedPin, OUTPUT);
+  pinMode(ledBluePin, OUTPUT);
+
+  // Criação da fila
+  ledQueue = xQueueCreate(10, sizeof(LedState));
+
+  // Criação das tasks
   xTaskCreate(onQrCodeTask, "onQrCode", 4 * 1024, NULL, 4, NULL);
   xTaskCreate(onHttpRequestTask, "onHttpRequest", 4 * 1024, NULL, 4, NULL);
+  xTaskCreate(ledControlTask, "ledControl", 4 * 1024, NULL, 2, NULL);
 }
 
 void loop()
